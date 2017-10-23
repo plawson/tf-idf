@@ -61,7 +61,7 @@ public class TFIDFDriver extends Configured implements Tool {
 
         failure = wordPerDoc(conf, wordCountDirectory, wordPerDocDirectory);
         if (failure) {
-            throw new IllegalStateException("Word Per Doc failed!")
+            throw new IllegalStateException("Word Per Doc failed!");
         }
 
         return tfidf(conf, wordPerDocDirectory, tfidfDirectory);
