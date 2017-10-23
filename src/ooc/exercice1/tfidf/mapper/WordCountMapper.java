@@ -21,9 +21,9 @@ import java.util.StringTokenizer;
  */
 public class WordCountMapper extends Mapper<LongWritable, Text, WordDocIdWritableComparable, IntWritable> {
 
-    private static final IntWritable one = new IntWritable(1);
+    private final IntWritable one = new IntWritable(1);
     private WordDocIdWritableComparable wordAndDoc = new WordDocIdWritableComparable();
-    private Set<String> stopWords = new HashSet<String>();
+    private Set<String> stopWords = new HashSet<>();
     private FileSystem hdfs = null;
 
     @Override
@@ -55,15 +55,16 @@ public class WordCountMapper extends Mapper<LongWritable, Text, WordDocIdWritabl
 
                 if (!this.stopWords.contains(token)) {
 
-                    InputSplit inputSplit = context.getInputSplit();
-                    //FileSplit fileSplit = (FileSplit) inputSplit;
+                    //InputSplit inputSplit = context.getInputSplit();
+                    ////FileSplit fileSplit = (FileSplit) inputSplit;
 
-                    String str1 = inputSplit.toString().split(":")[2];
-                    String[] str2 = str1.split("/");
-                    String fileName = str2[str2.length - 1];
+                    //String str1 = inputSplit.toString().split(":")[2];
+                    //String[] str2 = str1.split("/");
+                    //String fileName = str2[str2.length - 1];
 
 
-                    this.wordAndDoc.set(token, fileName);
+                    //this.wordAndDoc.set(token, fileName);
+                    this.wordAndDoc.set(token, ((FileSplit)context.getInputSplit()).getPath().getName());
                     context.write(this.wordAndDoc, this.one);
                 }
 

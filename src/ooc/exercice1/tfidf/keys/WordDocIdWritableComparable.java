@@ -15,6 +15,15 @@ public class WordDocIdWritableComparable implements WritableComparable<WordDocId
     private String word;
     private String docId;
 
+    public WordDocIdWritableComparable() {
+
+    }
+
+    public  WordDocIdWritableComparable(String word, String docId) {
+        this.word = word;
+        this.docId = docId;
+    }
+
     @Override
     public int compareTo(WordDocIdWritableComparable o) {
 
