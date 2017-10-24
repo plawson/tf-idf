@@ -2,17 +2,21 @@ package ooc.exercice1.tfidf.driver;
 
 import ooc.exercice1.tfidf.keys.WordDocIdWritableComparable;
 import ooc.exercice1.tfidf.mapper.TFIDFMapper;
+import ooc.exercice1.tfidf.mapper.TFIDFSortMapper;
 import ooc.exercice1.tfidf.mapper.WordCountMapper;
 import ooc.exercice1.tfidf.mapper.WordPerDocMapper;
 import ooc.exercice1.tfidf.reducer.TFIDFReducer;
+import ooc.exercice1.tfidf.reducer.TFIDFSortReducer;
 import ooc.exercice1.tfidf.reducer.WordCountReducer;
 import ooc.exercice1.tfidf.reducer.WordPerDocReducer;
+import ooc.exercice1.tfidf.sort.TFIDFSortComparator;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.LocatedFileStatus;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.RemoteIterator;
+import org.apache.hadoop.io.DoubleWritable;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
@@ -22,10 +26,11 @@ import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 
-import java.io.File;
 import java.io.IOException;
 
 public class TFIDFDriver extends Configured implements Tool {
+
+    private static final Path TFIDF_SORTED_20_OUTPUT = new Path("/tf-idf/sorted");
 
     @Override
     public int run(String[] args) throws Exception {
@@ -51,20 +56,30 @@ public class TFIDFDriver extends Configured implements Tool {
             numberOfDocuments++;
             remoteIterator.next();
         }
+
+        if (numberOfDocuments == 0) {
+            throw new Exception("No document found in " + inputDirectory);
+        }
+
         conf.setInt("numberOfDocuments", numberOfDocuments);
 
-        boolean failure = wordCount(conf, stopWordsFile, inputDirectory, wordCountDirectory);
+        boolean succeed = wordCount(conf, stopWordsFile, inputDirectory, wordCountDirectory);
 
-        if (failure) {
+        if (!succeed) {
             throw new IllegalStateException("Word count failed!");
         }
 
-        failure = wordPerDoc(conf, wordCountDirectory, wordPerDocDirectory);
-        if (failure) {
+        succeed = wordPerDoc(conf, wordCountDirectory, wordPerDocDirectory);
+        if (!succeed) {
             throw new IllegalStateException("Word Per Doc failed!");
         }
 
-        return tfidf(conf, wordPerDocDirectory, tfidfDirectory);
+        succeed = tfidf(conf, wordPerDocDirectory, tfidfDirectory);
+        if (!succeed) {
+            throw new IllegalStateException("TF-IDF computation failed !");
+        }
+
+        return sort(conf, tfidfDirectory);
     }
 
     private boolean wordCount(Configuration conf, Path stopWordsFile, Path inputDirectory, Path wordCountDirectory) throws IOException, InterruptedException, ClassNotFoundException {
@@ -103,7 +118,8 @@ public class TFIDFDriver extends Configured implements Tool {
         job.setMapperClass(WordPerDocMapper.class);
         job.setReducerClass(WordPerDocReducer.class);
         // keys and values
-        job.setOutputKeyClass(WordDocIdWritableComparable.class);
+        //job.setOutputKeyClass(WordDocIdWritableComparable.class);
+        job.setOutputKeyClass(Text.class);
         job.setOutputValueClass(Text.class);
         job.setOutputFormatClass(TextOutputFormat.class);
         // Input and output
@@ -111,13 +127,13 @@ public class TFIDFDriver extends Configured implements Tool {
         FileOutputFormat.setOutputPath(job, wordPerDocDirectory);
         FileSystem fileSystem = FileSystem.newInstance(conf);
         if (fileSystem.exists(wordPerDocDirectory)) {
-            fileSystem.delete(wordCountDirectory, true);
+            fileSystem.delete(wordPerDocDirectory, true);
         }
 
         return job.waitForCompletion(true);
     }
 
-    private int tfidf(Configuration conf, Path wordPerDocDirectory, Path tfidfDirectory) throws  IOException, InterruptedException, ClassNotFoundException {
+    private boolean tfidf(Configuration conf, Path wordPerDocDirectory, Path tfidfDirectory) throws  IOException, InterruptedException, ClassNotFoundException {
 
         // Job creation
         Job job = Job.getInstance(conf);
@@ -135,7 +151,33 @@ public class TFIDFDriver extends Configured implements Tool {
         FileOutputFormat.setOutputPath(job, tfidfDirectory);
         FileSystem fileSystem = FileSystem.newInstance(conf);
         if (fileSystem.exists(tfidfDirectory)) {
-            fileSystem.delete(tfidfDirectory);
+            fileSystem.delete(tfidfDirectory, true);
+        }
+
+        return job.waitForCompletion(true);
+    }
+
+    private int sort(Configuration conf, Path inputSortDirectory) throws IOException, InterruptedException, ClassNotFoundException {
+
+        // Job creation
+        Job job = Job.getInstance(conf);
+        job.setJobName("Sort TF-IDF Results");
+        // Driver, Mapper, Reducer
+        job.setJarByClass(TFIDFDriver.class);
+        job.setMapperClass(TFIDFSortMapper.class);
+        job.setReducerClass(TFIDFSortReducer.class);
+        // Keys, values
+        job.setOutputKeyClass(DoubleWritable.class);
+        job.setOutputValueClass(Text.class);
+        job.setOutputFormatClass(TextOutputFormat.class);
+        // Secondary sort order
+        job.setSortComparatorClass(TFIDFSortComparator.class);
+        // Input, output
+        FileInputFormat.addInputPath(job, inputSortDirectory);
+        FileOutputFormat.setOutputPath(job, TFIDF_SORTED_20_OUTPUT);
+        FileSystem fileSystem = FileSystem.newInstance(conf);
+        if(fileSystem.exists(TFIDF_SORTED_20_OUTPUT)) {
+            fileSystem.delete(TFIDF_SORTED_20_OUTPUT, true);
         }
 
         return job.waitForCompletion(true) ? 0 : 1;
