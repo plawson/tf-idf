@@ -1,14 +1,12 @@
 package ooc.exercice1.tfidf.driver;
 
+import ooc.exercice1.tfidf.group.JoinKeyGroup;
+import ooc.exercice1.tfidf.keys.JoinWordKey;
 import ooc.exercice1.tfidf.keys.WordDocIdWritableComparable;
-import ooc.exercice1.tfidf.mapper.TFIDFMapper;
-import ooc.exercice1.tfidf.mapper.TFIDFSortMapper;
-import ooc.exercice1.tfidf.mapper.WordCountMapper;
-import ooc.exercice1.tfidf.mapper.WordPerDocMapper;
-import ooc.exercice1.tfidf.reducer.TFIDFReducer;
-import ooc.exercice1.tfidf.reducer.TFIDFSortReducer;
-import ooc.exercice1.tfidf.reducer.WordCountReducer;
-import ooc.exercice1.tfidf.reducer.WordPerDocReducer;
+import ooc.exercice1.tfidf.mapper.*;
+import ooc.exercice1.tfidf.partitioner.WordPartitioner;
+import ooc.exercice1.tfidf.reducer.*;
+import ooc.exercice1.tfidf.sort.JoinSortComparator;
 import ooc.exercice1.tfidf.sort.TFIDFSortComparator;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
@@ -31,13 +29,17 @@ import java.io.IOException;
 public class TFIDFDriver extends Configured implements Tool {
 
     private static final Path TFIDF_SORTED_20_OUTPUT = new Path("/tf-idf/sorted");
+    private  static final String FREQUENCY_IN_COLLECTION_DIRECTORY_STR = "/tf-idf/frequencyincollection";
+    private  static final Path FREQUENCY_IN_COLLECTION_DIRECTORY = new Path(FREQUENCY_IN_COLLECTION_DIRECTORY_STR);
+
+    private boolean isJoinNeeded = false;
 
     @Override
     public int run(String[] args) throws Exception {
 
         // Check # of input parameters
-        if (args.length != 6) {
-            System.out.println("Usage: [stop words] [input_dir] [word_count_output_dir] [word_per_doc_output_dir] [tfidf_output_dir]");
+        if (args.length != 6 && args.length != 7) {
+            System.out.println("Usage: <stop words> <input_dir> <word_count_output_dir> <word_per_doc_output_dir> <tfidf_output_dir> [number_of_documents]");
             System.exit(-1);
         }
 
@@ -48,13 +50,22 @@ public class TFIDFDriver extends Configured implements Tool {
         Path wordPerDocDirectory = new Path(args[4]);
         Path tfidfDirectory = new Path(args[5]);
 
+
         // Count number of documents
         int numberOfDocuments = 0;
-        FileSystem fileSystem = FileSystem.get(conf);
-        RemoteIterator<LocatedFileStatus> remoteIterator = fileSystem.listFiles(inputDirectory, false);
-        while (remoteIterator.hasNext()) {
-            numberOfDocuments++;
-            remoteIterator.next();
+        if ( args.length == 7) {
+
+            numberOfDocuments = Integer.parseInt(args[6]);
+            this.isJoinNeeded = true;
+
+        } else {
+
+            FileSystem fileSystem = FileSystem.get(conf);
+            RemoteIterator<LocatedFileStatus> remoteIterator = fileSystem.listFiles(inputDirectory, false);
+            while (remoteIterator.hasNext()) {
+                numberOfDocuments++;
+                remoteIterator.next();
+            }
         }
 
         if (numberOfDocuments == 0) {
@@ -62,6 +73,8 @@ public class TFIDFDriver extends Configured implements Tool {
         }
 
         conf.setInt("numberOfDocuments", numberOfDocuments);
+        conf.set("frequencyincollection", FREQUENCY_IN_COLLECTION_DIRECTORY_STR);
+
 
         boolean succeed = wordCount(conf, stopWordsFile, inputDirectory, wordCountDirectory);
 
@@ -74,9 +87,24 @@ public class TFIDFDriver extends Configured implements Tool {
             throw new IllegalStateException("Word Per Doc failed!");
         }
 
-        succeed = tfidf(conf, wordPerDocDirectory, tfidfDirectory);
-        if (!succeed) {
-            throw new IllegalStateException("TF-IDF computation failed !");
+        if (this.isJoinNeeded) {
+
+            succeed = frequencyInCollection(conf, wordPerDocDirectory);
+            if (!succeed) {
+                throw new IllegalStateException("Frequency in collection failed!");
+            }
+
+            succeed = joiningTfidf(conf, wordPerDocDirectory, tfidfDirectory);
+            if (!succeed) {
+                throw new IllegalStateException("Joining TF-IDF computation failed !");
+            }
+
+        } else {
+
+            succeed = tfidf(conf, wordPerDocDirectory, tfidfDirectory);
+            if (!succeed) {
+                throw new IllegalStateException("TF-IDF computation failed !");
+            }
         }
 
         return sort(conf, tfidfDirectory);
@@ -147,6 +175,61 @@ public class TFIDFDriver extends Configured implements Tool {
         job.setOutputValueClass(Text.class);
         job.setOutputFormatClass(TextOutputFormat.class);
         // Input and output
+        FileInputFormat.addInputPath(job, wordPerDocDirectory);
+        FileOutputFormat.setOutputPath(job, tfidfDirectory);
+        FileSystem fileSystem = FileSystem.newInstance(conf);
+        if (fileSystem.exists(tfidfDirectory)) {
+            fileSystem.delete(tfidfDirectory, true);
+        }
+
+        return job.waitForCompletion(true);
+    }
+
+    private boolean frequencyInCollection(Configuration conf, Path wordPerDocDirectory) throws IOException, InterruptedException, ClassNotFoundException {
+
+        // Job creation
+        Job job = Job.getInstance(conf);
+        job.setJobName("Frequency in Collection");
+        // Driver, Mapper, Reducer
+        job.setJarByClass(TFIDFDriver.class);
+        job.setMapperClass(TermFrequencyInCollectionMapper.class);
+        job.setReducerClass(TermFrequencyInCollectionReducer.class);
+        // Keys, values
+        job.setOutputKeyClass(Text.class);
+        job.setOutputValueClass(Text.class);
+        job.setOutputFormatClass(TextOutputFormat.class);
+        // Input, Output
+        FileInputFormat.addInputPath(job, wordPerDocDirectory);
+        FileOutputFormat.setOutputPath(job, FREQUENCY_IN_COLLECTION_DIRECTORY);
+        FileSystem fileSystem = FileSystem.newInstance(conf);
+        if (fileSystem.exists(FREQUENCY_IN_COLLECTION_DIRECTORY)) {
+            fileSystem.delete(FREQUENCY_IN_COLLECTION_DIRECTORY, true);
+        }
+
+        return job.waitForCompletion(true);
+    }
+
+    private boolean joiningTfidf(Configuration conf, Path wordPerDocDirectory, Path tfidfDirectory) throws IOException, InterruptedException, ClassNotFoundException {
+
+        // Job creation
+        Job job = Job.getInstance(conf);
+        job.setJobName("Join TF-IDF");
+        // Number of reducer tasks
+        job.setNumReduceTasks(3); // This is an arbitrary value. It should normally depends on the total number of documents.
+        // Driver, Mapper, Reducer
+        job.setJarByClass(TFIDFDriver.class);
+        job.setMapperClass(TFIDFJoinMapper.class);
+        job.setReducerClass(TFIDFJoinReducer.class);
+        // Partitioner, group, secondary sort
+        job.setPartitionerClass(WordPartitioner.class);
+        job.setGroupingComparatorClass(JoinKeyGroup.class);
+        job.setSortComparatorClass(JoinSortComparator.class);
+        // Keys, values
+        job.setOutputKeyClass(JoinWordKey.class);
+        job.setOutputValueClass(Text.class);
+        job.setOutputFormatClass(TextOutputFormat.class);
+        // Input, output
+        FileInputFormat.addInputPath(job, FREQUENCY_IN_COLLECTION_DIRECTORY);
         FileInputFormat.addInputPath(job, wordPerDocDirectory);
         FileOutputFormat.setOutputPath(job, tfidfDirectory);
         FileSystem fileSystem = FileSystem.newInstance(conf);
