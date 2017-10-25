@@ -10,6 +10,8 @@ import java.util.Map;
 
 public class TFIDFReducer extends Reducer<Text, Text, Text, Text> {
 
+    private static final DecimalFormat decimalFormat = new DecimalFormat("###.#########");
+
     @Override
     public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
         int numberOfDocuments = context.getConfiguration().getInt("numberOfDocuments", 0);
@@ -22,11 +24,9 @@ public class TFIDFReducer extends Reducer<Text, Text, Text, Text> {
             termFrequencyInCollection++;
         }
 
-        DecimalFormat decimalFormat = new DecimalFormat("###.######");
-
         for (String docId: docIdAndCounts.keySet()) {
             String[] wordCountAndWordPerDoc = docIdAndCounts.get(docId).split("\t");
-            double tfidf = Integer.parseInt(wordCountAndWordPerDoc[1]) * Integer.parseInt(wordCountAndWordPerDoc[0]) * Math.log10(numberOfDocuments/termFrequencyInCollection);
+            double tfidf = (Double.parseDouble(wordCountAndWordPerDoc[0]) / Double.parseDouble(wordCountAndWordPerDoc[1])) * Math.log10(numberOfDocuments/termFrequencyInCollection);
             context.write(new Text(key + "\t" + docId), new Text(decimalFormat.format(tfidf)));
         }
 
