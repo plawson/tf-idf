@@ -8,6 +8,6 @@ public class WordPartitioner extends Partitioner<JoinWordKey, Text> {
 
     @Override
     public int getPartition(JoinWordKey key, Text text, int numReduceTasks) {
-        return (key.getJoinKey().hashCode() % numReduceTasks);
+        return (key.getJoinKey().hashCode() & Integer.MAX_VALUE) % numReduceTasks;
     }
 }
